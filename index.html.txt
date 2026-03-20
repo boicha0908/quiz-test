@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>이솔 특보: 사라진 시험지 사건</title>
+<style>
+:root{--bg:#0f1220;--card:#171a2b;--text:#e8eaf6;--sub:#9aa0b7;--ok:#2ecc71;--ng:#ff5a6b;--ac:#7c9cff}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(180deg,#0f1220,#0b0e1a);color:var(--text);font-family:system-ui, -apple-system, Segoe UI, Roboto}
+#app{max-width:860px;margin:24px auto;padding:16px}
+.hd{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.title{font-weight:800;font-size:22px}
+.badge{background:#23264a;border-radius:999px;padding:6px 10px;color:#cdd2ff}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.btn{border:none;border-radius:12px;padding:12px 14px;background:#2a2e55;color:#fff;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.ok{background:var(--ok)}
+.btn.ng{background:var(--ng)}
+.q{font-size:20px;margin:10px 0 14px}
+.choices{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fb{margin-top:10px;padding:10px;border-radius:10px;background:#12152a;color:#cfd3ff}
+.fb.ok{outline:2px solid var(--ok)}
+.fb.ng{outline:2px solid var(--ng)}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.heart{font-size:18px;margin-right:4px}
+.lost{filter:grayscale(1);opacity:.4}
+.prog{height:8px;background:#1a1e38;border-radius:999px;overflow:hidden}
+.prog>div{height:100%;background:var(--ac);width:0%}
+.kpis{display:flex;gap:10px}
+.kpi{background:#12152a;border-radius:10px;padding:8px 10px;color:#cfd3ff}
+.timer{display:flex;align-items:center;gap:8px}
+.big{font-weight:800}
+.center{text-align:center}
+.hidden{display:none}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.crd{background:#22265a;border-radius:12px;padding:18px;text-align:center;cursor:pointer}
+.crd.sel{outline:2px solid #9bb0ff}
+.crd.matched{background:#1f7a5b}
+.crd.bad{background:#7a1f2a}
+.input{width:100%;padding:12px;border-radius:10px;border:none;background:#0f1330;color:#fff}
+.footer{margin-top:14px;display:flex;justify-content:space-between;align-items:center}
+.small{color:var(--sub);font-size:12px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="hd">
+    <div class="title">📰 이솔 특보: 사라진 시험지 사건</div>
+    <div class="badge" id="combo">0콤보</div>
+  </div>
+
+  <div class="top">
+    <div id="lives"></div>
+    <div class="timer">⏱ <span class="big" id="t">--</span></div>
+  </div>
+
+  <div class="prog"><div id="bar"></div></div>
+  <div class="kpis">
+    <div class="kpi">점수: <b id="score">0</b></div>
+    <div class="kpi">정답: <b id="correct">0</b></div>
+    <div class="kpi">문제: <b id="idx">1</b>/<b id="total">10</b></div>
+  </div>
+
+  <div id="screen" class="card"></div>
+</div>
+
+<script>
+// ── 상태 ─────────────────────────
+let qIdx=0, lives=3, maxLives=3, combo=0, maxCombo=0;
+let score=0, correct=0; let timer=0, remain=0, itv=null;
+
+const TOTAL=10;
+const TIME=12; // 문제당 제한시간
+
+// ── 문제 ─────────────────────────
+const QUESTIONS=[
+{type:'ox', q:'이솔고 도서관에서 음식 섭취가 가능하다.', ans:false, ex:'도서관은 음식 금지!'},
+{type:'blank', q:"시험지 발견 장소는 '이솔 ___실'이다.", answers:['자료'], ex:'자료실에서 발견!'},
+{type:'mission', q:'가장 수상한 행동은?', choices:['독서','두리번','수면','대화'], correct:1, ex:'주변을 계속 살피는 행동!'},
+{type:'ox', q:'시험지는 교무실에 보관된다.', ans:true, ex:'보안상 교무실 보관.'},
+{type:'blank', q:"기자의 핵심 태도는 '___성'이다.", answers:['객관'], ex:'객관성!'},
+{type:'card', pairs:[["기자","기사 작성"],["사서","자료 관리"],["학생","수업 참여"]]},
+{type:'mission', q:'적절한 기사 제목은?', choices:['대충 기사','시험지 유출의 진실','오늘 날씨','심심'], correct:1, ex:'핵심을 담아야 함'},
+{type:'ox', q:'확인 안 된 정보도 기사로 쓸 수 있다.', ans:false, ex:'팩트체크 필수'},
+{type:'blank', q:"사실 기반 보도를 '___ 보도'라고 한다.", answers:['정확'], ex:'정확 보도'},
+{type:'mission', q:'단서를 찾았다. 먼저 할 일은?', choices:['SNS 업로드','친구에게 말함','교사 보고','혼자 해결'], correct:2, ex:'공식 보고'}
+];
+
+// ── 유틸 ─────────────────────────
+const $=s=>document.querySelector(s);
+function setBar(){ $('#bar').style.width=((qIdx)/TOTAL*100)+'%'; }
+function setLives(){
+  const el=$('#lives'); el.innerHTML='';
+  for(let i=0;i<maxLives;i++){ const s=document.createElement('span'); s.className='heart'+(i>=lives?' lost':''); s.textContent='❤️'; el.appendChild(s);} }
+function setKPIs(){ $('#score').textContent=score; $('#correct').textContent=correct; $('#idx').textContent=qIdx+1; $('#total').textContent=TOTAL; }
+function setCombo(on){ $('#combo').textContent=combo+'콤보'; }
+function tickStart(){ clearInterval(itv); timer=TIME; remain=TIME; $('#t').textContent=remain; itv=setInterval(()=>{ remain--; $('#t').textContent=remain; if(remain<=0){ clearInterval(itv); timeUp(); }},1000);} 
+function tickStop(){ clearInterval(itv);} 
+function timeUp(){ lock(); fb(false,'⏱ 시간 초과!'); wrong(); }
+function fb(ok, msg){ const el=document.createElement('div'); el.className='fb '+(ok?'ok':'ng'); el.textContent=(ok?'✓ ':'✗ ')+msg; $('#screen').appendChild(el);} 
+function lock(){ Array.from(document.querySelectorAll('.btn, .crd')).forEach(b=>b.disabled=true); }
+function next(){ qIdx++; if(qIdx>=TOTAL){ end(); return;} render(); }
+function addCombo(){ combo++; if(combo>maxCombo) maxCombo=combo; setCombo(); }
+function resetCombo(){ combo=0; setCombo(); }
+function addScore(){ let s=10; if(remain>0) s+=remain; if(combo>=3) s+=combo*2; score+=s; }
+function right(){ correct++; addCombo(); addScore(); }
+function wrong(){ resetCombo(); lives--; setLives(); if(lives<=0){ setTimeout(end,400); }}
+
+// ── 렌더 ─────────────────────────
+function render(){ setBar(); setKPIs(); $('#screen').innerHTML=''; const d=QUESTIONS[qIdx];
+  if(d.type==='ox') renderOX(d);
+  else if(d.type==='blank') renderBlank(d);
+  else if(d.type==='mission') renderMission(d);
+  else if(d.type==='card') renderCard(d);
+  tickStart();
+}
+
+function renderOX(d){ const wrap=document.createElement('div');
+  wrap.innerHTML=`<div class='q'>${d.q}</div>`;
+  const row=document.createElement('div'); row.className='row';
+  const b1=btn('O',()=>ans(d.ans===true)); const b2=btn('X',()=>ans(d.ans===false));
+  row.appendChild(b1); row.appendChild(b2); wrap.appendChild(row); $('#screen').appendChild(wrap);
+}
+
+function renderBlank(d){ const wrap=document.createElement('div');
+  wrap.innerHTML=`<div class='q'>${d.q}</div>`;
+  const inp=document.createElement('input'); inp.className='input';
+  const b=btn('확인',()=>{
+    const v=(inp.value||'').replace(/\s+/g,'').toLowerCase();
+    const ok=d.answers.some(a=>a.replace(/\s+/g,'').toLowerCase()===v);
+    ans(ok, ok?`정답! [${d.answers[0]}]`:`정답은 [${d.answers[0]}]`);
+  });
+  wrap.appendChild(inp); wrap.appendChild(b); $('#screen').appendChild(wrap); inp.focus();
+}
+
+function renderMission(d){ const wrap=document.createElement('div');
+  wrap.innerHTML=`<div class='q'>${d.q}</div>`;
+  const grid=document.createElement('div'); grid.className='choices';
+  d.choices.forEach((c,i)=> grid.appendChild(btn(c,()=>ans(i===d.correct))));
+  wrap.appendChild(grid); $('#screen').appendChild(wrap);
+}
+
+// 카드 짝맞추기
+let sel=null, matched=0, wrongCnt=0, done=false;
+function renderCard(d){ sel=null; matched=0; wrongCnt=0; done=false;
+  const wrap=document.createElement('div'); wrap.innerHTML=`<div class='q'>짝을 모두 찾아요!</div>`;
+  const grid=document.createElement('div'); grid.className='grid3';
+  let cards=[]; d.pairs.forEach((p,i)=>{cards.push({i, t:p[0]}); cards.push({i, t:p[1]});});
+  cards.sort(()=>Math.random()-.5);
+  cards.forEach(c=>{
+    const el=document.createElement('button'); el.className='crd'; el.textContent=c.t;
+    el.onclick=()=>pick(el,c.i,d.pairs.length);
+    grid.appendChild(el);
+  });
+  wrap.appendChild(grid); $('#screen').appendChild(wrap);
+}
+function pick(el, pid, total){ if(done||el.classList.contains('matched')||el.classList.contains('sel')) return; el.classList.add('sel');
+  if(!sel){ sel={el,pid}; return; }
+  const a=sel; const b={el,pid}; sel=null;
+  if(a.pid===b.pid){ a.el.classList.remove('sel'); b.el.classList.remove('sel'); a.el.classList.add('matched'); b.el.classList.add('matched'); matched++;
+    if(matched===total){ done=true; tickStop(); ans(wrongCnt===0, wrongCnt?`${wrongCnt}번 틀림`:'완벽!'); }
+  } else { wrongCnt++; a.el.classList.add('bad'); b.el.classList.add('bad'); setTimeout(()=>{a.el.classList.remove('sel','bad'); b.el.classList.remove('sel','bad');},600); }
+}
+
+function btn(text, on){ const b=document.createElement('button'); b.className='btn'; b.textContent=text; b.onclick=()=>{ tickStop(); on(); }; return b; }
+
+function ans(ok, msg){ lock(); const d=QUESTIONS[qIdx]; if(ok){ right(); fb(true, msg||d.ex); } else { wrong(); fb(false, msg||d.ex); }
+  const nextBtn=document.createElement('button'); nextBtn.className='btn'; nextBtn.textContent='다음 →'; nextBtn.onclick=next; $('#screen').appendChild(nextBtn);
+}
+
+function end(){ tickStop(); $('#screen').innerHTML=`
+  <div class='center'>
+    <h2>🔍 사건 해결!</h2>
+    <p>점수: <b>${score}</b> / 정답: <b>${correct}</b> / 최대 콤보: <b>${maxCombo}</b></p>
+    <p class='small'>범인: 야자 감독을 피해 시험지를 빼돌린 학생 기자</p>
+    <button class='btn' onclick='location.reload()'>다시 하기</button>
+  </div>`;
+}
+
+// ── 시작 ─────────────────────────
+setLives(); setCombo(); render();
+</script>
+</body>
+</html>
